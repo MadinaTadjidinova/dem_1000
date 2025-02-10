@@ -2,6 +2,7 @@ import logging
 import asyncio
 import datetime
 from aiogram import Bot, types, Router
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from aiogram.filters import Command
 from config import CHAT_ID, ADMIN_IDS, TOPICS, PAYMENT_REMINDER, sponsor_bot
 from google_sheets import sheet
@@ -11,6 +12,59 @@ router = Router()  # Используем Router
 # ✅ Настраиваем логирование
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+# 🔹 Функция для создания кнопок "О нас"
+def get_about_us_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎥 Видео", callback_data="about_video")],
+            [InlineKeyboardButton(text="🖼 Фото", callback_data="about_photo")],
+            [InlineKeyboardButton(text="📂 Проекты", callback_data="about_projects")],
+            [InlineKeyboardButton(text="📜 История", callback_data="about_history")]
+        ]
+    )
+
+async def send_about_menu(bot: Bot):
+    """Отправляет меню в топик 'О нас' при запуске."""
+    topic_id = TOPICS["онас"]
+    await bot.send_message(
+        CHAT_ID,
+        "📢 Добро пожаловать в раздел 'О нас'!\nВыберите интересующий раздел:",
+        reply_markup=get_about_us_keyboard(),
+        message_thread_id=topic_id
+    )
+    logging.info("📌 Меню 'О нас' отправлено автоматически.")
+
+@router.message()
+async def auto_about_menu(message: Message):
+    """Автоматически показывает меню, если кто-то пишет в топик 'О нас'."""
+    topic_id = TOPICS["онас"]
+    
+    if message.message_thread_id == topic_id:
+        logging.info(f"📌 В топике 'О нас' появилось новое сообщение от {message.from_user.username}. Отправляем меню.")
+        await message.answer("📢 Выберите раздел:", reply_markup=get_about_us_keyboard())
+
+# 🔹 Обработчики кнопок с `edit_message_text`
+@router.callback_query(lambda c: c.data.startswith("about_"))
+async def about_callback_handler(callback: types.CallbackQuery):
+    """Редактирует сообщение с кнопками только для пользователя, который нажал"""
+    responses = {
+        "about_video": "🎥 **Видео о нашем проекте**\n[Ссылка на видео](https://example.com)",
+        "about_photo": "🖼 **Фото о нашем проекте**\n[Галерея фото](https://example.com)",
+        "about_projects": "📂 **Наши проекты**:\n1️⃣ Проект 1 - описание\n2️⃣ Проект 2 - описание\n3️⃣ Проект 3 - описание",
+        "about_history": "📜 **История проекта**:\nНаш проект был создан в ... (тут можно добавить описание)."
+    }
+
+    text = responses.get(callback.data, "Ошибка, попробуйте снова.")
+
+    # Редактируем только сообщение пользователя
+    await callback.message.edit_text(
+        text=text,
+        reply_markup=get_about_us_keyboard()  # Оставляем кнопки, чтобы можно было выбрать снова
+    )
+    await callback.answer()
+
+
+# ✅ Обработчик команды /send
 @router.message(Command("send"))
 async def send_to_topic(message: types.Message):
     """Отправка сообщений администраторами в топики"""
@@ -22,13 +76,13 @@ async def send_to_topic(message: types.Message):
     raw_text = message.caption if message.caption else message.text
 
     if not raw_text:
-        await message.answer("❌ Укажите текст сообщения после команды `/send`.")
+        await message.answer("❌ Укажите текст сообщения после команды `/send`.")  
         return
 
     args = raw_text.split(maxsplit=2)
 
     if len(args) < 3:
-        await message.answer("❌ Используйте формат: `/send [топик] [текст]`")
+        await message.answer("❌ Используйте формат: `/send [топик] [текст]`")  
         return
 
     topic_name = args[1].lower()
@@ -66,6 +120,7 @@ async def send_to_topic(message: types.Message):
 
     await message.answer(f"✅ Сообщение отправлено в топик **{topic_name}**!")
 
+
 async def auto_send_payment_reminder(bot: Bot):
     """Авто-напоминание о платеже"""
     topic_id = TOPICS["общий"]
@@ -73,7 +128,7 @@ async def auto_send_payment_reminder(bot: Bot):
         now = datetime.datetime.now()
         await bot.send_message(CHAT_ID, PAYMENT_REMINDER, message_thread_id=topic_id)
         logging.info(f"📨 Отправлено напоминание о платеже в общий чат.")
-        await asyncio.sleep(600)  # Ждём 1 день (86400 секунд)
+        await asyncio.sleep(86400)  # Ждём 1 день (86400 секунд)
 
 
 # 🆕 Новый обработчик кнопок подтверждения/отклонения платежей
