@@ -17,21 +17,53 @@ async def send_to_topic(message: types.Message):
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ У вас нет прав на отправку сообщений.")
         return
-    
-    args = message.text.split(maxsplit=2)
+
+    # Определяем текст сообщения: берем caption, если есть фото/видео, иначе берем message.text
+    raw_text = message.caption if message.caption else message.text
+
+    if not raw_text:
+        await message.answer("❌ Укажите текст сообщения после команды `/send`.")
+        return
+
+    args = raw_text.split(maxsplit=2)
+
     if len(args) < 3:
         await message.answer("❌ Используйте формат: `/send [топик] [текст]`")
         return
-    
+
     topic_name = args[1].lower()
     text = args[2]
 
     if topic_name not in TOPICS:
         await message.answer(f"❌ Такого топика нет. Доступные: {', '.join(TOPICS.keys())}")
         return
-    
+
     topic_id = TOPICS[topic_name]
-    await message.bot.send_message(CHAT_ID, text, message_thread_id=topic_id)
+
+    # 🖼 Фото
+    if message.photo:
+        photo = message.photo[-1].file_id
+        await message.bot.send_photo(CHAT_ID, photo=photo, caption=text, message_thread_id=topic_id)
+
+    # 🎥 Видео
+    elif message.video:
+        video = message.video.file_id
+        await message.bot.send_video(CHAT_ID, video=video, caption=text, message_thread_id=topic_id)
+
+    # 📁 Документ (PDF, файлы)
+    elif message.document:
+        document = message.document.file_id
+        await message.bot.send_document(CHAT_ID, document=document, caption=text, message_thread_id=topic_id)
+
+    # 🎙 Голосовое сообщение
+    elif message.voice:
+        voice = message.voice.file_id
+        await message.bot.send_voice(CHAT_ID, voice=voice, caption=text, message_thread_id=topic_id)
+
+    # 📝 Обычное текстовое сообщение
+    else:
+        await message.bot.send_message(CHAT_ID, text, message_thread_id=topic_id)
+
     await message.answer(f"✅ Сообщение отправлено в топик **{topic_name}**!")
 
 async def auto_send_payment_reminder(bot: Bot):
@@ -41,7 +73,8 @@ async def auto_send_payment_reminder(bot: Bot):
         now = datetime.datetime.now()
         await bot.send_message(CHAT_ID, PAYMENT_REMINDER, message_thread_id=topic_id)
         logging.info(f"📨 Отправлено напоминание о платеже в общий чат.")
-        await asyncio.sleep(60)  # Ждём 1 день (86400 секунд)
+        await asyncio.sleep(600)  # Ждём 1 день (86400 секунд)
+
 
 # 🆕 Новый обработчик кнопок подтверждения/отклонения платежей
 @router.callback_query()
