@@ -1,4 +1,7 @@
+from aiogram import Bot
+
 TOKEN = "7847845721:AAGFDHoGFpJOrI6zx1kteR204EWER9sONjc"
+bot = Bot(token=TOKEN)
 CHAT_ID = "-1002267046905"  # Основная группа
 ADMIN_CHAT_ID = "-1002446687533"  # Группа админов
 ADMIN_IDS = [6946609744]  # ID админов

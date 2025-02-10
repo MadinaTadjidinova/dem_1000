@@ -3,7 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from config import TOKEN
 from handlers import router as handlers_router, auto_send_payment_reminder  # ✅ Переименовали router
-from payments import router as payments_router  # ✅ Переименовали router
+from payments import pay_router as payments_router  # ✅ Переименовали router
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
