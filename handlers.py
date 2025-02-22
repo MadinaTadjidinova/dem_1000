@@ -2,15 +2,58 @@ import logging
 import asyncio
 import datetime
 from aiogram import Bot, types, Router
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message
 from aiogram.filters import Command
 from config import CHAT_ID, ADMIN_IDS, TOPICS, PAYMENT_REMINDER, sponsor_bot
-from google_sheets import sheet
+from google_sheets import sheet, update_payment_status
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, FSInputFile, InputMediaPhoto, InputMediaVideo
+import time
+import os
+from config import CHAT_ID, TOPICS
 
 router = Router()  # Используем Router
 
+FAQ_TOPIC_ID = TOPICS["правила"] 
+
 # ✅ Настраиваем логирование
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
+
+# 🔹 Кнопки для Правил и FAQ
+def get_rules_faq_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📜 Правила", callback_data="show_rules")],
+            [InlineKeyboardButton(text="❓ FAQ", callback_data="show_faq")]
+        ]
+    )
+
+# 🔹 Тексты для кнопок
+FAQ_DATA = {
+    "show_rules": "📜 **Правила сообщества:**\n\n1️⃣ Будьте вежливыми\n2️⃣ Не спамьте\n3️⃣ Соблюдайте правила чата\n\nСпасибо за понимание! ✅",
+    "show_faq": "❓ **Часто задаваемые вопросы:**\n\n🔹 *Как оплатить?* - Перейдите в раздел 'Реквизиты'.\n🔹 *Как получить доступ?* - Напишите администратору.\n🔹 *Как поддержать проект?* - Внести 1000 сом в фонд библиотеки.\n\nЕсли остались вопросы, напишите админу. 😉"
+}
+
+# ✅ Отправка меню в топик "Правила"
+async def send_faq_menu(bot: Bot):  # Изменили types.Bot -> Bot
+    await bot.send_message(
+        chat_id=CHAT_ID,
+        text="📢 Добро пожаловать! Выберите раздел:",
+        reply_markup=get_rules_faq_keyboard(),
+        message_thread_id=FAQ_TOPIC_ID
+    )
+
+# ✅ Автоматически показываем меню при новом сообщении в топике "Правила"
+@router.message(lambda message: message.message_thread_id == FAQ_TOPIC_ID)
+async def auto_faq_menu(message: types.Message):
+    await message.answer("📢 Выберите раздел:", reply_markup=get_rules_faq_keyboard())
+
+# ✅ Обработчик кнопок без отправки нового сообщения
+@router.callback_query(lambda c: c.data in FAQ_DATA)
+async def faq_callback_handler(callback: types.CallbackQuery):
+    new_text = FAQ_DATA[callback.data]  # Получаем текст по callback_data
+    await callback.message.edit_text(new_text, reply_markup=get_rules_faq_keyboard(), parse_mode="Markdown")
+    await callback.answer()
 
 # 🔹 Функция для создания кнопок "О нас"
 def get_about_us_keyboard():
@@ -34,55 +77,113 @@ async def send_about_menu(bot: Bot):
     )
     logging.info("📌 Меню 'О нас' отправлено автоматически.")
 
-@router.message()
+@router.message(lambda message: message.message_thread_id == TOPICS.get("онас"))
 async def auto_about_menu(message: Message):
     """Автоматически показывает меню, если кто-то пишет в топик 'О нас'."""
     topic_id = TOPICS["онас"]
-    
-    if message.message_thread_id == topic_id:
-        logging.info(f"📌 В топике 'О нас' появилось новое сообщение от {message.from_user.username}. Отправляем меню.")
-        await message.answer("📢 Выберите раздел:", reply_markup=get_about_us_keyboard())
+    logging.info(f"📌 В топике 'О нас' появилось новое сообщение от {message.from_user.username}. Отправляем меню.")
+    await message.answer("📢 Выберите раздел:", reply_markup=get_about_us_keyboard())
 
 # 🔹 Обработчики кнопок с `edit_message_text`
 @router.callback_query(lambda c: c.data.startswith("about_"))
 async def about_callback_handler(callback: types.CallbackQuery):
     """Редактирует сообщение с кнопками только для пользователя, который нажал"""
     responses = {
-        "about_video": "🎥 **Видео о нашем проекте**\n[Ссылка на видео](https://example.com)",
-        "about_photo": "🖼 **Фото о нашем проекте**\n[Галерея фото](https://example.com)",
-        "about_projects": "📂 **Наши проекты**:\n1️⃣ Проект 1 - описание\n2️⃣ Проект 2 - описание\n3️⃣ Проект 3 - описание",
-        "about_history": "📜 **История проекта**:\nНаш проект был создан в ... (тут можно добавить описание)."
+        "about_video": ("🎥 Видео о нашем проекте\n больше выидео найдете по сыылке -> https://drive.google.com/drive/folders/1CmsFgQQVetcUBFw8XcanelkNwxSBJjvm", "about_project.mp4"),
+        "about_photo": ("🖼 Фото о нашем проекте\n Галерея фото -> https://drive.google.com/drive/folders/1CXIOPapS8w06fJtm1KGbzjw5pgZ_nZhK", "photo.jpg"),
+        "about_projects": (
+        "📂 **Наши проекты:**\n\n"
+        "1️⃣ **Дем-ивент** – Биздин китепкана башка китепканалардан айырмаланып жашоосу кызыктуу болуусу үчүн ар дайым ар кандай форматтагы иш-чараларды уюштуруп келет.\n\n"
+        "2️⃣ **Дем-ыктыярчы** – Коомубуздагы баардык жаштарды өзгөртө албарыбыз анык, бирок бир инсандын өзгөрүүсүнө түрткү боло алсак, ал адам дагы башкаларга таасир берет. "
+        "Ошол себептүү 14-18 жаштагы окуучулар менен аларга кызыктуу болгон багыттар боюнча өзүн-өзү өнүктүрүү программасын иштеп чыгып иш алып баруудабыз.\n\n"
+        "3️⃣ **Лидер мугалим** – Акыркы мезгилде мугалимдердин коомдогу орду төмөндөп кеткен көрүнүшкө күбө болуудабыз. "
+        "Бул долбоордун негизги максаты мугалимдердин беделин алардын кесипкөйлүгүн күчөтүү, өзүн-өзү өнүктүрүүсү аркылуу көтөрүү.",
+        "projects.jpg"
+    ),
+        "about_history": ("📜 **История проекта**:\nНаш проект был создан в ... (тут можно добавить описание).", "history.jpg"),
     }
 
-    text = responses.get(callback.data, "Ошибка, попробуйте снова.")
+    # text, image_filename = responses.get(callback.data, "Ошибка, попробуйте снова.")
+    response = responses.get(callback.data)
+    
+    if response is None:
+        await callback.answer("❌ Ошибка: неверный запрос", show_alert=True)
+        return
 
-    # Редактируем только сообщение пользователя
-    await callback.message.edit_text(
-        text=text,
-        reply_markup=get_about_us_keyboard()  # Оставляем кнопки, чтобы можно было выбрать снова
-    )
+    text, file_name = response
+
+    file_path = os.path.join(ASSETS_DIR, file_name)
+
+    # Проверяем, существует ли файл
+    if not os.path.exists(file_path):
+        await callback.answer("❌ Файл не найден!", show_alert=True)
+        return
+
+    media_file = FSInputFile(file_path)
+
+    # Улучшенная проверка формата файла (независимо от регистра)
+    if file_name.lower().endswith((".jpg", ".jpeg", ".png")):
+        media = InputMediaPhoto(media=media_file, caption=text)
+    elif file_name.lower().endswith((".mp4", ".mov", ".avi", ".mkv")):
+        media = InputMediaVideo(media=media_file, caption=text)
+    else:
+        await callback.answer("❌ Неподдерживаемый формат файла", show_alert=True)
+        return
+
+    try:
+        await callback.message.edit_media(media, reply_markup=get_about_us_keyboard())
+    except Exception as e:
+        await callback.answer(f"⚠ Ошибка при обновлении медиа: {str(e)}", show_alert=True)
+
     await callback.answer()
 
 
-# ✅ Обработчик команды /send
+
+    # if image_filename:
+    #     image_path = os.path.join(ASSETS_DIR, image_filename)
+    #     photo = FSInputFile(image_path)
+
+    #     # 🔹 Меняем фото и текст в существующем сообщении
+    #     media = InputMediaPhoto(media=photo, caption=text)
+    #     await callback.message.edit_media(media, reply_markup=get_about_us_keyboard())
+
+    # else:
+    #     # 🔹 Если фото нет, просто редактируем текст
+    #     await callback.message.edit_text(text=text, reply_markup=get_about_us_keyboard())
+
+    # await callback.answer()
+
+    # Редактируем только сообщение пользователя
+    # await callback.message.edit_text(
+    #     text=text,
+    #     reply_markup=get_about_us_keyboard()  # Оставляем кнопки, чтобы можно было выбрать снова
+    # )
+    # await callback.answer()
+
+    # 🔹 Отправляем изображение, если оно есть
+
+
+     
+
 @router.message(Command("send"))
 async def send_to_topic(message: types.Message):
-    """Отправка сообщений администраторами в топики"""
+    logging.info(f"📥 Получена команда /send от {message.from_user.username}: {message.text}")
+
     if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ У вас нет прав на отправку сообщений.")
         return
 
-    # Определяем текст сообщения: берем caption, если есть фото/видео, иначе берем message.text
+    # Если сообщение содержит фото, видео или документ — берем caption, иначе обычный текст
     raw_text = message.caption if message.caption else message.text
 
     if not raw_text:
-        await message.answer("❌ Укажите текст сообщения после команды `/send`.")  
+        await message.answer("❌ Укажите текст сообщения после команды /send.")
         return
 
     args = raw_text.split(maxsplit=2)
 
     if len(args) < 3:
-        await message.answer("❌ Используйте формат: `/send [топик] [текст]`")  
+        await message.answer("❌ Используйте формат: /send [топик] [текст]")
         return
 
     topic_name = args[1].lower()
@@ -94,41 +195,50 @@ async def send_to_topic(message: types.Message):
 
     topic_id = TOPICS[topic_name]
 
-    # 🖼 Фото
+    # Если топик "general", `message_thread_id` не нужен
+    message_kwargs = {"chat_id": CHAT_ID, "caption": text}
+    if topic_name != "general":
+        message_kwargs["message_thread_id"] = topic_id
+
+    # Отправка медиа (фото, видео, документ)
     if message.photo:
-        photo = message.photo[-1].file_id
-        await message.bot.send_photo(CHAT_ID, photo=photo, caption=text, message_thread_id=topic_id)
-
-    # 🎥 Видео
+        await message.bot.send_photo(**message_kwargs, photo=message.photo[-1].file_id)
     elif message.video:
-        video = message.video.file_id
-        await message.bot.send_video(CHAT_ID, video=video, caption=text, message_thread_id=topic_id)
-
-    # 📁 Документ (PDF, файлы)
+        await message.bot.send_video(**message_kwargs, video=message.video.file_id)
     elif message.document:
-        document = message.document.file_id
-        await message.bot.send_document(CHAT_ID, document=document, caption=text, message_thread_id=topic_id)
-
-    # 🎙 Голосовое сообщение
+        await message.bot.send_document(**message_kwargs, document=message.document.file_id)
     elif message.voice:
-        voice = message.voice.file_id
-        await message.bot.send_voice(CHAT_ID, voice=voice, caption=text, message_thread_id=topic_id)
+        await message.bot.send_voice(**message_kwargs, voice=message.voice.file_id)
 
-    # 📝 Обычное текстовое сообщение
     else:
-        await message.bot.send_message(CHAT_ID, text, message_thread_id=topic_id)
+        # Если нет медиа, отправляем текст
+        await message.bot.send_message(CHAT_ID, text, message_thread_id=topic_id if topic_name != "general" else None)
 
-    await message.answer(f"✅ Сообщение отправлено в топик **{topic_name}**!")
+    await message.answer(f"✅ Сообщение отправлено в **{topic_name}**!")
+
 
 
 async def auto_send_payment_reminder(bot: Bot):
     """Авто-напоминание о платеже"""
-    topic_id = TOPICS["общий"]
-    while True:
-        now = datetime.datetime.now()
-        await bot.send_message(CHAT_ID, PAYMENT_REMINDER, message_thread_id=topic_id)
-        logging.info(f"📨 Отправлено напоминание о платеже в общий чат.")
-        await asyncio.sleep(86400)  # Ждём 1 день (86400 секунд)
+    topic_id = TOPICS["general"]
+
+    today = datetime.datetime.now().day
+    if today == 18:
+        await bot.send_message(CHAT_ID, PAYMENT_REMINDER)
+        logging.info("📨 Напоминание отправлено ВСЕМ 1-го числа.")
+    
+    elif today == 25:
+        unpaid_users = get_unpaid_users()
+        
+        if unpaid_users:
+            for user_id in unpaid_users:
+                await bot.send_message(user_id, "⚠ Напоминание: Вы не оплатили взнос. Пожалуйста, внесите платеж.")
+            logging.info(f"📨 Напоминание отправлено {len(unpaid_users)} пользователям, которые не заплатили.")
+        else:
+            logging.info("✅ Все заплатили, напоминание 5-го числа не требуется.")
+    else:
+        logging.info("📅 Сегодня не 1-е и не 5-е число, напоминание не отправляется.")
+
 
 
 # 🆕 Новый обработчик кнопок подтверждения/отклонения платежей
@@ -144,13 +254,16 @@ async def process_payment_action(callback: types.CallbackQuery):
     action, user_id, amount = data[0], data[1], data[2]
     logging.info(f"🟢 Получен callback: {action}, user_id={user_id}, amount={amount}")
 
-    # 🔹 Ищем платеж в Google Sheets
+    def clean_text(value):
+        return str(value).strip().replace("\u00A0", " ")  # Убираем пробелы и неразрывные пробелы
+
+    # 🔍 Проверяем, есть ли платеж в Google Sheets
     records = [{k.strip(): v for k, v in row.items()} for row in sheet.get_all_records()]  # Убираем лишние пробелы
     row_number = None
 
     for i, row in enumerate(records, start=2):  # Первая строка — заголовки
-        logging.info(f"🔍 Проверяем строку {i}: {row}")
-        if str(row["Telegram ID"]) == str(user_id) and str(row["Сумма"]) == str(amount):
+        logging.info(f"🔍 Проверяем строку {i}: {row}")  # 🔹 Логируем все строки
+        if clean_text(row["Telegram ID"]) == clean_text(user_id) and clean_text(row["Сумма"]) == clean_text(amount):
             row_number = i
             break
 
@@ -158,9 +271,11 @@ async def process_payment_action(callback: types.CallbackQuery):
         logging.warning(f"❌ Платеж не найден! user_id={user_id}, amount={amount}")
         await callback.answer("❌ Платеж не найден в Google Sheets!", show_alert=True)
         return
+    time.sleep(0.5) 
 
+    # 🔹 Обновляем статус платежа в Google Sheets
     if action == "confirm":
-        sheet.update_cell(row_number, 6, "✅ Подтвержден")
+        sheet.update_acell(f"F{row_number}", "✅ Подтвержден")  # Колонка "Статус"
         await callback.message.edit_caption(
             f"✅ Чек от @{callback.from_user.username} подтвержден!",
             reply_markup=None
@@ -169,7 +284,7 @@ async def process_payment_action(callback: types.CallbackQuery):
         logging.info(f"✅ Чек от user_id={user_id} на сумму {amount} сом подтвержден!")
 
     elif action == "reject":
-        sheet.update_cell(row_number, 6, "❌ Отклонен")
+        sheet.update_acell(f"F{row_number}", "❌ Отклонен")  # Колонка "Статус"
         await callback.message.edit_caption(
             f"❌ Чек от @{callback.from_user.username} отклонен!",
             reply_markup=None
