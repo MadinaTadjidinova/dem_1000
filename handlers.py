@@ -1,23 +1,106 @@
 import logging
 import asyncio
 import datetime
+import time
+import os
 from aiogram import Bot, types, Router
 from aiogram.filters import Command
 from config import CHAT_ID, ADMIN_IDS, TOPICS, PAYMENT_REMINDER, sponsor_bot
 from google_sheets import sheet, update_payment_status
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, FSInputFile, InputMediaPhoto, InputMediaVideo
-import time
-import os
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, FSInputFile, InputMediaPhoto, InputMediaVideo, InputMediaDocument
 from config import CHAT_ID, TOPICS
 
 router = Router()  # Используем Router
 
 FAQ_TOPIC_ID = TOPICS["правила"] 
+REPORT_TOPIC_ID = TOPICS.get("отчёт")
 
 # ✅ Настраиваем логирование
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
+
+# 🔹 Директория для отчетов
+REPORTS_DIR = os.path.join(os.path.dirname(__file__), "reports")
+os.makedirs(REPORTS_DIR, exist_ok=True)  # Создаем папку, если ее нет
+
+# 🔹 Словарь для хранения путей к последним отчетам
+REPORT_FILES = {
+    "events": None,
+    "finance": None
+}
+
+# 🔹 ID топика для отчетов
+REPORT_TOPIC_ID = TOPICS.get("отчёт", None)
+
+# ✅ Кнопки меню отчетов
+def get_reports_keyboard():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📊 Отчет мероприятий", callback_data="show_events_report")],
+            [InlineKeyboardButton(text="💰 Финансовый отчет", callback_data="show_finance_report")]
+        ]
+    )
+
+# ✅ Обработчик загрузки отчета
+@router.message(lambda message: message.document and message.caption and message.caption.startswith("/upload_report"))
+async def handle_report_upload(message: types.Message, bot: Bot):
+    if message.caption is None:
+        await message.answer("❌ Нужно добавить описание: `/upload_report events` или `/upload_report finance`.")
+        return
+
+    args = message.caption.split()
+    if len(args) < 2 or args[1] not in ["events", "finance"]:
+        await message.answer("❌ Используйте команду: `/upload_report events` или `/upload_report finance`.")
+        return
+
+    report_type = args[1]
+    file_path = os.path.join(REPORTS_DIR, f"{report_type}.pdf")
+
+    # 📥 Скачиваем файл через `bot.download`
+    await bot.download(file=message.document, destination=file_path)
+
+    # 🔹 Обновляем словарь с файлами
+    REPORT_FILES[report_type] = file_path
+
+    await message.answer(f"✅ Отчет загружен: {report_type.capitalize()}.")
+
+    # Проверяем, задан ли топик "Отчёт"
+    if REPORT_TOPIC_ID is None:
+        await message.answer("❌ Ошибка: Топик 'Отчёты' не найден. Проверьте настройки.")
+        return
+
+    # 🔹 Отправляем отчет в топик "Отчет"
+    document = FSInputFile(file_path)
+    await bot.edit_media(
+        chat_id=CHAT_ID,
+        document=document,
+        caption=f"📄 Новый {('отчет мероприятий' if report_type == 'events' else 'финансовый отчет')} загружен.",
+        message_thread_id=REPORT_TOPIC_ID
+    )
+
+# ✅ Обработчик запроса отчетов
+@router.callback_query(lambda c: c.data in ["show_events_report", "show_finance_report"])
+async def report_callback_handler(callback: types.CallbackQuery):
+    report_type = "events" if callback.data == "show_events_report" else "finance"
+    file_path = REPORT_FILES.get(report_type)
+
+    if not file_path or not os.path.exists(file_path):
+        await callback.answer("❌ Отчет не найден. Администратор должен загрузить новый файл.", show_alert=True)
+        return
+
+    document = FSInputFile(file_path)
+    await callback.message.answer_document(
+        document,
+        caption=f"📄 {('Отчет мероприятий' if report_type == 'events' else 'Финансовый отчет')} за месяц"
+    )
+
+# ✅ Авто-отправка меню в топик "Отчет"
+@router.message(lambda message: message.message_thread_id == REPORT_TOPIC_ID)
+async def auto_report_menu(message: types.Message):
+    await message.answer("📢 Выберите тип отчета:", reply_markup=get_reports_keyboard())
+
+
 
 # 🔹 Кнопки для Правил и FAQ
 def get_rules_faq_keyboard():
