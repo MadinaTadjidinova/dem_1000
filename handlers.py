@@ -29,11 +29,15 @@ REPORT_FILES = {
     "events": None,
     "finance": None
 }
+# Храним ID ОДНОГО сообщения с отчетами
+REPORT_FILES = None
 
 # 🔹 ID топика для отчетов
 REPORT_TOPIC_ID = TOPICS.get("отчёт", None)
 
-# ✅ Кнопки меню отчетов
+
+
+# Кнопки выбора отчетов
 def get_reports_keyboard():
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -42,12 +46,10 @@ def get_reports_keyboard():
         ]
     )
 
-# ✅ Обработчик загрузки отчета
+# 📥 **Обработчик загрузки отчета (только обновление сообщения)**
 @router.message(lambda message: message.document and message.caption and message.caption.startswith("/upload_report"))
 async def handle_report_upload(message: types.Message, bot: Bot):
-    if message.caption is None:
-        await message.answer("❌ Нужно добавить описание: `/upload_report events` или `/upload_report finance`.")
-        return
+    global REPORT_FILES
 
     args = message.caption.split()
     if len(args) < 2 or args[1] not in ["events", "finance"]:
@@ -57,50 +59,69 @@ async def handle_report_upload(message: types.Message, bot: Bot):
     report_type = args[1]
     file_path = os.path.join(REPORTS_DIR, f"{report_type}.pdf")
 
-    # 📥 Скачиваем файл через `bot.download`
+    # 📥 Сохраняем файл
     await bot.download(file=message.document, destination=file_path)
 
-    # 🔹 Обновляем словарь с файлами
-    REPORT_FILES[report_type] = file_path
+    # 🔄 Если сообщение с отчетами уже существует – просто обновляем его
+    if REPORT_FILES:
+        try:
+            document = FSInputFile(file_path)
+            caption = f"📄 Доступны отчеты: выберите нужный файл."
 
-    await message.answer(f"✅ Отчет загружен: {report_type.capitalize()}.")
+            await bot.edit_message_media(
+                chat_id=CHAT_ID,
+                message_id=REPORT_FILES,
+                media=InputMediaDocument(media=document, caption=caption),
+                reply_markup=get_reports_keyboard()
+            )
+            await message.answer("✅ Файл обновлен и сообщение с отчетом обновлено.")
+        except Exception as e:
+            logging.error(f"Ошибка при обновлении отчета: {e}")
+            await message.answer("⚠ Ошибка при обновлении сообщения. Попробуйте еще раз.")
+    else:
+        # Если сообщения еще не было, создаем его ОДИН раз
+        document = FSInputFile(file_path)
+        caption = f"📄 Доступны отчеты: выберите нужный файл."
+        msg = await bot.send_document(
+            chat_id=CHAT_ID,
+            document=document,
+            caption=caption,
+            message_thread_id=REPORT_TOPIC_ID,
+            reply_markup=get_reports_keyboard()
+        )
+        REPORT_FILES = msg.message_id  # Запоминаем ID
 
-    # Проверяем, задан ли топик "Отчёт"
-    if REPORT_TOPIC_ID is None:
-        await message.answer("❌ Ошибка: Топик 'Отчёты' не найден. Проверьте настройки.")
-        return
+    await message.delete()  # Удаляем сообщение с командой, чтобы не засорять чат
 
-    # 🔹 Отправляем отчет в топик "Отчет"
-    document = FSInputFile(file_path)
-    await bot.edit_media(
-        chat_id=CHAT_ID,
-        document=document,
-        caption=f"📄 Новый {('отчет мероприятий' if report_type == 'events' else 'финансовый отчет')} загружен.",
-        message_thread_id=REPORT_TOPIC_ID
-    )
-
-# ✅ Обработчик запроса отчетов
+# 📄 **Обработчик кнопок (редактирует существующее сообщение)**
 @router.callback_query(lambda c: c.data in ["show_events_report", "show_finance_report"])
 async def report_callback_handler(callback: types.CallbackQuery):
-    report_type = "events" if callback.data == "show_events_report" else "finance"
-    file_path = REPORT_FILES.get(report_type)
+    global REPORT_FILES
 
-    if not file_path or not os.path.exists(file_path):
+    report_type = "events" if callback.data == "show_events_report" else "finance"
+    file_path = os.path.join(REPORTS_DIR, f"{report_type}.pdf")
+
+    if not os.path.exists(file_path):
         await callback.answer("❌ Отчет не найден. Администратор должен загрузить новый файл.", show_alert=True)
         return
 
     document = FSInputFile(file_path)
-    await callback.message.answer_document(
-        document,
-        caption=f"📄 {('Отчет мероприятий' if report_type == 'events' else 'Финансовый отчет')} за месяц"
-    )
+    caption = f"📄 Доступны отчеты: выберите нужный файл."
 
-# ✅ Авто-отправка меню в топик "Отчет"
-@router.message(lambda message: message.message_thread_id == REPORT_TOPIC_ID)
-async def auto_report_menu(message: types.Message):
-    await message.answer("📢 Выберите тип отчета:", reply_markup=get_reports_keyboard())
+    # 🔄 Всегда редактируем сообщение, а не создаем новое
+    if REPORT_FILES:
+        try:
+            await callback.bot.edit_message_media(
+                chat_id=CHAT_ID,
+                message_id=REPORT_FILES,
+                media=InputMediaDocument(media=document, caption=caption),
+                reply_markup=get_reports_keyboard()
+            )
+        except Exception as e:
+            logging.error(f"Ошибка при обновлении отчета: {e}")
+            await callback.answer("⚠ Ошибка обновления сообщения, попробуйте позже.", show_alert=True)
 
-
+    await callback.answer()
 
 # 🔹 Кнопки для Правил и FAQ
 def get_rules_faq_keyboard():
@@ -220,33 +241,6 @@ async def about_callback_handler(callback: types.CallbackQuery):
 
     await callback.answer()
 
-
-
-    # if image_filename:
-    #     image_path = os.path.join(ASSETS_DIR, image_filename)
-    #     photo = FSInputFile(image_path)
-
-    #     # 🔹 Меняем фото и текст в существующем сообщении
-    #     media = InputMediaPhoto(media=photo, caption=text)
-    #     await callback.message.edit_media(media, reply_markup=get_about_us_keyboard())
-
-    # else:
-    #     # 🔹 Если фото нет, просто редактируем текст
-    #     await callback.message.edit_text(text=text, reply_markup=get_about_us_keyboard())
-
-    # await callback.answer()
-
-    # Редактируем только сообщение пользователя
-    # await callback.message.edit_text(
-    #     text=text,
-    #     reply_markup=get_about_us_keyboard()  # Оставляем кнопки, чтобы можно было выбрать снова
-    # )
-    # await callback.answer()
-
-    # 🔹 Отправляем изображение, если оно есть
-
-
-     
 
 @router.message(Command("send"))
 async def send_to_topic(message: types.Message):
