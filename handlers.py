@@ -294,7 +294,7 @@ async def send_to_topic(message: types.Message):
     await message.answer(f"✅ Сообщение отправлено в **{topic_name}**!")
 
 
-
+# Напоминание 
 async def auto_send_payment_reminder(bot: Bot):
     """Авто-напоминание о платеже"""
     topic_id = TOPICS["general"]

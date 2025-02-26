@@ -3,7 +3,7 @@ import pytesseract
 from PIL import Image
 from aiogram import types, Router
 from aiogram.types import FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from config import admin_bot, ADMIN_CHAT_ID
+from config import admin_bot, ADMIN_CHAT_ID, TOPICS
 from google_sheets import add_payment, update_payment_status
 
 pay_router = Router()  # ✅ Создаём Router
@@ -71,7 +71,8 @@ async def pay_handler(message: types.Message):
             markup = get_admin_buttons(user_id, amount)
 
             await admin_bot.send_photo(
-                ADMIN_CHAT_ID,
+                chat_id=ADMIN_CHAT_ID,  # ✅ Осталось как есть
+                message_thread_id=TOPICS["проверка"],
                 photo=FSInputFile(local_path),
                 caption=f"❗ Подозрительный чек от @{username}.\nПричина: {validation_message}",
                 reply_markup=markup
